@@ -241,6 +241,8 @@ public class SearchTEActivity extends ActivityGlobalAbstract implements SearchTE
     @Override
     protected void onResume() {
         super.onResume();
+        Integer java = null;
+        java.byteValue();
         FilterManager.getInstance().clearUnsupportedFilters();
 
         if (isMapVisible()) {
