@@ -22,7 +22,14 @@ import org.dhis2.usescases.general.ActivityGlobalAbstract;
 import org.dhis2.usescases.main.MainActivity;
 import org.dhis2.utils.customviews.BreakTheGlassBottomDialog;
 import org.hisp.dhis.android.core.D2Manager;
+import org.hisp.dhis.antlr.Parser;
+import org.hisp.dhis.antlr.ParserExceptionWithoutContext;
+import org.hisp.dhis.rules.RuleVariableValue;
+import org.hisp.dhis.rules.models.Rule;
 import org.hisp.dhis.rules.models.RuleAction;
+import org.hisp.dhis.rules.models.RuleVariable;
+import org.hisp.dhis.rules.parser.expression.CommonExpressionVisitor;
+import org.hisp.dhis.rules.utils.RuleEngineUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -31,10 +38,14 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import kotlin.Unit;
+
+import static org.hisp.dhis.rules.parser.expression.ParserUtils.FUNCTION_EVALUATE;
 
 public class DevelopmentActivity extends ActivityGlobalAbstract {
 
@@ -57,20 +68,93 @@ public class DevelopmentActivity extends ActivityGlobalAbstract {
     private void loadProgramRuleCheck() {
         binding.ruleActionQualityButton.setOnClickListener(view -> {
             binding.ruleActionQualityResult.setText("Checking...");
-            List<RuleAction> programRules = RuleExtensionsKt.toRuleActionList(
-                    D2Manager.getD2().programModule().programRuleActions().blockingGet()
+            List<Rule> programRules = RuleExtensionsKt.toRuleList(
+                    D2Manager.getD2().programModule().programRules().withProgramRuleActions().blockingGet()
             );
+            List<RuleVariable> ruleVariables = RuleExtensionsKt.toRuleVariableList(
+                    D2Manager.getD2().programModule().programRuleVariables().blockingGet(),
+                    D2Manager.getD2().trackedEntityModule().trackedEntityAttributes(),
+                    D2Manager.getD2().dataElementModule().dataElements()
+            );
+            Map<String, RuleVariableValue> valueMap = new HashMap<>();
+            for (RuleVariable ruleVariable : ruleVariables) {
+                valueMap.put(ruleVariable.name(), null);
+            }
             StringBuilder checkResult = new StringBuilder("");
-            for (RuleAction ruleAction : programRules) {
-                if (ruleAction instanceof RuleActionUnsupported) {
-                    checkResult.append("Program rule uid: " + ((RuleActionUnsupported) ruleAction).actionValueType());
+            for (Rule rule : programRules) {
+                boolean hasError = false;
+                String ruleConditionResult = process(rule.condition(), valueMap);
+                if (!ruleConditionResult.isEmpty()) {
+                    hasError = true;
+                    checkResult.append("*************");
                     checkResult.append("\n");
-                    checkResult.append(((RuleActionUnsupported) ruleAction).content());
+                    checkResult.append("Program rule uid: " + rule.uid());
+                    checkResult.append("\n");
+                    checkResult.append("- " + ruleConditionResult);
                     checkResult.append("\n");
                 }
+                for (RuleAction ruleAction : rule.actions()) {
+                    if (ruleAction instanceof RuleActionUnsupported) {
+                        if (!hasError) {
+                            hasError = true;
+                            checkResult.append("*************");
+                            checkResult.append("\n");
+                            checkResult.append("Program rule uid: " + rule.uid());
+                        }
+                        checkResult.append("\n");
+                        checkResult.append("- " + ((RuleActionUnsupported) ruleAction).content());
+                        checkResult.append("\n");
+                    }
+                    String actionConditionResult = process(ruleAction.data(), valueMap);
+                    if (!actionConditionResult.isEmpty()) {
+                        if (!hasError) {
+                            hasError = true;
+                            checkResult.append("*************");
+                            checkResult.append("\n");
+                            checkResult.append("Program rule uid: " + rule.uid());
+                        }
+                        checkResult.append("\n");
+                        checkResult.append("- " + actionConditionResult);
+                        checkResult.append("\n");
+                    }
+                }
             }
+
             binding.ruleActionQualityResult.setText(checkResult);
         });
+    }
+
+    private String process(String condition, Map<String, RuleVariableValue> valueMap) {
+        if (condition.isEmpty()) {
+            return "";
+        }
+        try {
+            CommonExpressionVisitor commonExpressionVisitor = CommonExpressionVisitor.newBuilder()
+                    .withFunctionMap(RuleEngineUtils.FUNCTIONS)
+                    .withFunctionMethod(FUNCTION_EVALUATE)
+                    .withVariablesMap(valueMap)
+                    .withSupplementaryData(new HashMap<>())
+                    .validateCommonProperties();
+
+            Object result = Parser.visit(condition, commonExpressionVisitor, !isOldAndroidVersion());
+            String resultString = convertInteger(result).toString();
+            return "";
+        } catch (ParserExceptionWithoutContext e) {
+            return "Condition " + condition + " not executed: " + e.getMessage();
+        } catch (Exception e) {
+            return "Unexpected exception while evaluating " + condition + ": " + e.getMessage();
+        }
+    }
+
+    private Boolean isOldAndroidVersion() {
+        return Build.VERSION.SDK_INT < 21;
+    }
+
+    private Object convertInteger(Object result) {
+        if (result instanceof Double && (Double) result % 1 == 0) {
+            return ((Double) result).intValue();
+        }
+        return result;
     }
 
     private void loadAnalyticsDevTools() {
