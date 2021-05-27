@@ -105,4 +105,21 @@ class DataSetTest : BaseTest() {
         }
 
     }
+
+    @Test
+    fun shouldOpenDatasetWithoutPermissionCheckThatItIsUnmodifiable() {
+        startDataSetDetailActivity("Lpw6GcnTrmS", "Emergency Response", ruleDataSetDetail)
+
+        dataSetRobot {
+            clickOnDataSetAtPosition(0)
+        }
+
+        dataSetTableRobot {
+            checkEditionOnEditTextCell(0, 0)
+            clickOnSaveButton()
+            waitToDebounce(500)
+            clickOnNegativeButton()
+        }
+
+    }
 }
